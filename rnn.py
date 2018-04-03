@@ -250,12 +250,12 @@ def QLSTMCell(input, hidden, w_ih_r, w_ih_i, w_ih_j, w_ih_k,
     cellgate   = F.tanh(   torch.cat([  cellgate_r,   cellgate_i,   cellgate_j,   cellgate_k], dim=1))
     outgate    = F.sigmoid(torch.cat([   outgate_r,    outgate_i,    outgate_j,    outgate_k], dim=1))
 
-    fc = hamilton_product(forgetgate, c)
-    ic = hamilton_product(ingate, cellgate)
-    cy = fc + ic
+    #fc = hamilton_product(forgetgate, c)
+    #ic = hamilton_product(ingate, cellgate)
+    #cy = fc + ic
+    cy = (forgetgate * c) + (ingate * cellgate)
+    #hy = hamilton_product(outgate, F.tanh(cy))
     #cy = (forgetgate * c) + (ingate * cellgate)
-    hy = hamilton_product(outgate, F.tanh(cy))
-    #cy = (forgetgate * c) + (ingate * cellgate)
-    #hy = outgate * F.tanh(cy)
+    hy = outgate * F.tanh(cy)
     return apply_quaternion_dropout(hy, dropout, rng, do_dropout, dropout_type, operation), cy
 
