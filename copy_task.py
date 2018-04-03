@@ -44,7 +44,7 @@ def evaluate_batch(model, criterion, T, rng, ntokens=10, length_seq=10, batch_si
     # it says: "Sets the module in evaluation mode. This has any effect only
     #           on modules such as Dropout or BatchNorm."
     hidden = model.init_hidden(batch_size)
-    if model.rnn_type not in {'LSTM', 'CLSTM'}:
+    if model.rnn_type not in {'LSTM', 'CLSTM', 'QLSTM'}:
         hidden = hidden.cuda() if use_cuda else hidden
     else:
         h0, c0 = hidden
@@ -74,7 +74,7 @@ def train(model, optimizer, criterion, T, rng, ntokens=10, length_seq=10, batch_
         data, target = get_batch(batch_size, T, rng, length_seq, evaluation=False)
         optimizer.zero_grad()
         hidden = model.init_hidden(batch_size)
-        if model.rnn_type not in {'LSTM', 'CLSTM'}:
+        if model.rnn_type not in {'LSTM', 'CLSTM', 'QLSTM'}:
             hidden = hidden.cuda() if use_cuda else hidden
         else:  # which means if rnn_type == 'LSTM'
             if type(hidden) is tuple:
@@ -217,7 +217,7 @@ def build_parser():
     parser.add_argument(
         # CLSTM and CGRU are respectively Complex LSTM and Complex GRU.
         '--rnn-type',
-        choices=['LSTM', 'GRU', 'CLSTM', 'CGRU', 'CRU', 'RNN_TANH', 'RNN_RELU'],
+        choices=['LSTM', 'GRU', 'CLSTM', 'CGRU', 'CRU', 'RNN_TANH', 'RNN_RELU', 'QLSTM', 'QGRU', 'QRNN'],
         default='CRU',
         type=str,
         help='The type of the RNN cell.'
@@ -355,7 +355,7 @@ def build_parser():
     parser.add_argument(
         # weight intialization would be orthogonal in case when the RNN is real-valued.
         '--weight-init',
-        choices=['unitary', 'complex', 'orthogonal'],
+        choices=['unitary', 'complex', 'orthogonal', 'quaternion'],
         default='unitary',
         type=str,
         help="Weight initialization."

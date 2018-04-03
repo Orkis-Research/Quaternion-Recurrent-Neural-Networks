@@ -131,20 +131,6 @@ def quaternion_linear(input, r_weight, i_weight, j_weight, k_weight, bias=None):
         - Bias:        (nb_quaternion_elements_out * 4)
         - Output:      (batch_size, nb_quaternion_elements_out * 4)
     code:
-        The code is equivalent of doing the following (Hamilton product):
-        >>> input_r = get_r(input)
-        >>> input_i = get_i(input)
-        >>> input_j = get_j(input)
-        >>> input_k = get_k(input)
-        >>> r = input_r.mm(r_weight) - input_i.mm(i_weight) - input_j.mm(i_weight) - input_k.mm(i_weight)
-        >>> i = input_i.mm(i_weight) + input_r.mm(r_weight) - input_k.mm(k_weight) + input_j.mm(j_weight)
-        >>> j = input_j.mm(j_weight) + input_k.mm(k_weight) + input_r.mm(r_weight) - input_i.mm(i_weight)
-        >>> k = input_k.mm(k_weight) - input_j.mm(j_weight) + input_i.mm(i_weight) + input_r.mm(r_weight)
-
-        >>> if bias is not None:
-        >>>    return torch.cat([r, i, j, k], dim=1) + bias
-        >>> else:
-        >>>    return torch.cat([r, i, j, k], dim=1)
     """
 
     check_input(input)
@@ -171,7 +157,50 @@ def quaternion_linear(input, r_weight, i_weight, j_weight, k_weight, bias=None):
     else:
         return input.mm(cat_kernels_4_quaternion)
 
-#### Why unitary ?
+
+def hamilton_product(q0, q1):
+    """
+    Applies a Hamilton product q0 * q1:
+    Shape:
+        - q0, q1 should be (batch_size, quaternion_number)
+        (rr' - xx' - yy' - zz')  + 
+        (rx' + xr' + yz' - zy')i +
+        (ry' - xz' + yr' + zx')j +
+        (rz' + xy' - yx' + zr')k + 
+    """
+
+    # NEED TO CHECK THE SHAPE OF THE INPUT
+    #check_input(input)
+    
+
+    q1_r = get_r(q1)
+    q1_i = get_i(q1)
+    q1_j = get_j(q1)
+    q1_k = get_k(q1)
+
+    # rr', xx', yy', and zz' 
+    r_base = torch.mul(q0, q1)
+    # (rr' - xx' - yy' - zz')
+    r   = get_r(r_base) - get_i(r_base) - get_j(r_base) - get_k(r_base)
+
+    # rx', xr', yz', and zy'
+    i_base = torch.mul(q0, torch.cat([q1_i, q1_r, q1_k, q1_j], dim=1))
+    # (rx' + xr' + yz' - zy')
+    i   = get_r(i_base) + get_i(i_base) + get_j(i_base) - get_k(i_base)
+
+    # ry', xz', yr', and zx'
+    j_base = torch.mul(q0, torch.cat([q1_j, q1_k, q1_r, q1_i], dim=1))
+    # (rx' + xr' + yz' - zy')
+    j   = get_r(j_base) - get_i(j_base) + get_j(j_base) + get_k(j_base)
+
+    # rz', xy', yx', and zr'
+    k_base = torch.mul(q0, torch.cat([q1_k, q1_j, q1_i, q1_r], dim=1))
+    # (rx' + xr' + yz' - zy')
+    k   = get_r(k_base) + get_i(k_base) - get_j(k_base) + get_k(k_base)
+
+    return torch.cat([r, i, j, k], dim=1)
+
+
 def unitary_init(in_features, out_features, rng, criterion='glorot'):
     
     if criterion == 'glorot':
@@ -186,13 +215,13 @@ def unitary_init(in_features, out_features, rng, criterion='glorot'):
     v_i = np.random.uniform(0.0,1.0,number_of_weights)
     v_j = np.random.uniform(0.0,1.0,number_of_weights)
     v_k = np.random.uniform(0.0,1.0,number_of_weights)
-    #Make these purely imaginary quaternions unitary
+    #Make these unitary quaternion
     for i in range(0, number_of_weights):
     	norm = np.sqrt(v_r[i]**2 + v_i[i]**2 + v_j[i]**2 + v_k[i]**2)+0.0001
     	v_r[i]/= norm
         v_i[i]/= norm
-	v_j[i]/= norm
-	v_k[i]/= norm
+        v_j[i]/= norm
+        v_k[i]/= norm
     v_r = v_r.reshape(kernel_shape)
     v_i = v_i.reshape(kernel_shape)
     v_j = v_j.reshape(kernel_shape)
@@ -242,3 +271,61 @@ def quaternion_init(in_features, out_features, rng, criterion='glorot'):
     weight_k = modulus * v_k*np.sin(phase)
 
     return (weight_r, weight_i, weight_j, weight_k)
+
+def create_dropout_mask(dropout_p, size, rng, as_type, operation='linear'):
+    if operation == 'linear':
+        mask = rng.binomial(n=1, p=1-dropout_p, size=size)
+        return Variable(torch.from_numpy(mask).type(as_type))
+    else:
+         raise Exception("create_dropout_mask accepts only 'linear'. Found operation = "
+                        + str(operation))   
+
+
+def apply_quaternion_mask(input, mask, dropout_type='quaternion', operation='linear'):
+    if dropout_type == 'quaternion':
+        input_r_masked = get_real(input, input_type=operation) * mask
+        input_i_masked = get_imag(input, input_type=operation) * mask
+        input_j_masked = get_imag(input, input_type=operation) * mask
+        input_k_masked = get_imag(input, input_type=operation) * mask
+        return torch.cat([input_r_masked, input_i_masked, input_j_masked, input_k_masked], dim=1)
+    elif dropout_type == 'regular':
+        return input * mask
+    else:
+        raise Exception("dropout_type accepts only 'complex' or 'regular'. Found dropout_type = "
+                        + str(dropout_type))
+
+
+def apply_quaternion_dropout(input, dropout_p, rng, do_dropout=True, dropout_type='quaternion', operation='linear'):
+    size = input.data.size()
+    s = []
+    for i in range(input.dim()):
+        s.append(size[i])
+    if dropout_type == 'quaternion':
+            s[1] = s[1] // 4
+    elif dropout_type != 'regular':
+        raise Exception("dropout_type accepts only 'quaternion' or 'regular'. Found dropout_type = "
+                        + str(dropout_type))
+    s = tuple(s)
+    mask = create_dropout_mask(dropout_p, s, rng, input.data.type(), operation)
+    return apply_complex_mask(input, mask, dropout_type, operation) / (1 - dropout_p) if do_dropout else input
+
+
+def affect_init(r_weight, i_weight, j_weight, k_weight, init_func, rng, init_criterion):
+    if r_weight.size() != i_weight.size() or r_weight.size() != j_weight.size() or \
+    r_weight.size() != k_weight.size() :
+         raise ValueError('The real and imaginary weights '
+                 'should have the same size . Found: r:'
+                 + str(r_weight.size()) +' i:'
+                 + str(i_weight.size()) +' j:'
+                 + str(j_weight.size()) +' k:'
+                 + str(k_weight.size()))
+
+    elif r_weight.dim() != 2:
+        raise Exception('affect_init accepts only matrices. Found dimension = '
+                        + str(r_weight.dim()))
+    r, i, j, k = init_func(r_weight.size(0), r_weight.size(1), rng, init_criterion)
+    r, i, j, k = torch.from_numpy(r), torch.from_numpy(i), torch.from_numpy(j), torch.from_numpy(k)
+    r_weight.data = r.type_as(r_weight.data)
+    i_weight.data = i.type_as(i_weight.data)
+    j_weight.data = j.type_as(j_weight.data)
+    k_weight.data = k.type_as(k_weight.data)

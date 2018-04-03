@@ -7,16 +7,16 @@ import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 from torch.nn import Module
 from complexops import *
-
+from quaternionops import *
 
 def recurrent(inner, input, hx, reverse=False, **params):
     output = []
     steps = range(input.size(0) - 1, -1, -1) if reverse else range(input.size(0))
     hy = hx
-    if inner in {ConvLSTMCell, CLSTMCell}:
+    if inner in {CLSTMCell, QLSTMCell}:
         hy, cy = hx
     for i in steps:
-        if inner in {ConvLSTMCell, CLSTMCell}:
+        if inner in {QLSTMCell, CLSTMCell}:
             hy, cy = inner(input[i], (hy, cy), **params)
         else:
             hy = inner(input[i], hy, **params)
@@ -28,68 +28,9 @@ def recurrent(inner, input, hx, reverse=False, **params):
     return output, hy
 
 
-# Heavily copied from https://github.com/pytorch/pytorch/blob/master/torch/nn/_functions/rnn.py#L47
-def ConvGRUCell(input, hidden, w_ih, w_hh, b_ih, b_hh,
-                dropout, train, rng, **opargs):
-
-    if   input.dim() == 3:
-        convop = F.conv1d
-    elif input.dim() == 4:
-        convop = F.conv2d
-    elif input.dim() == 5:
-        convop = F.conv3d
-    else:
-        raise Exception("The convolutional input is either 3, 4 or 5 dimensions."
-                        " input.dim = " + str(input.dim()))
-
-    do_dropout = train and dropout > 0.0
-
-    h = hidden.squeeze(0)
-    gi = convop(input,  w_ih, b_ih, **opargs)
-    gh = convop(h,      w_hh, b_hh, **opargs)
-    i_r, i_i, i_n = gi.chunk(3, 1)
-    h_r, h_i, h_n = gh.chunk(3, 1)
-
-    resetgate = F.sigmoid(i_r + h_r)
-    inputgate = F.sigmoid(i_i + h_i)
-    newgate   = F.tanh(i_n + resetgate * h_n)
-
-    hy = newgate + inputgate * (h - newgate)
-
-    return F.dropout2d(hy, p=dropout, training=do_dropout)
-
-
-def ConvLSTMCell(input, hidden, w_ih, w_hh, b_ih, b_hh,
-                 dropout, train, rng, **opargs):
-    if   input.dim() == 3:
-        convop = F.conv1d
-    elif input.dim() == 4:
-        convop = F.conv2d
-    elif input.dim() == 5:
-        convop = F.conv3d
-    else:
-        raise Exception("The convolutional input is either 3, 4 or 5 dimensions."
-                        " input.dim = " + str(input.dim()))
-
-    do_dropout = train and dropout > 0.0
-    
-    hx, cx = hidden
-    h = hx.squeeze(0)
-    c = cx.squeeze(0)
-
-    gates = convop(input, w_ih, b_ih, **opargs) + convop(h, w_hh, b_hh, **opargs)
-
-    ingate, forgetgate, cellgate, outgate = gates.chunk(4, 1)
-
-    ingate     = F.sigmoid(ingate)
-    forgetgate = F.sigmoid(forgetgate)
-    cellgate   = F.tanh(   cellgate)
-    outgate    = F.sigmoid(outgate)
-
-    cy = (forgetgate * c) + (ingate * cellgate)
-    hy = outgate * F.tanh(cy)
-
-    return F.dropout2d(hy, p=dropout, training=do_dropout), cy
+#
+# COMPLEX
+#
 
 
 def CGRUCell(input, hidden, w_ih_real, w_ih_imag, w_hh_real, w_hh_imag,
@@ -112,7 +53,7 @@ def CGRUCell(input, hidden, w_ih_real, w_ih_imag, w_hh_real, w_hh_imag,
     zt = F.sigmoid(torch.cat([zt_real_inp + zt_real_hid, zt_imag_inp + zt_imag_hid], dim=1))
     rt = F.sigmoid(torch.cat([rt_real_inp + rt_real_hid, rt_imag_inp + rt_imag_hid], dim=1))
     ct = F.tanh(torch.cat([ct_real_inp, ct_imag_inp], dim=1) + \
-                rt * torch.cat([ct_real_inp + ct_real_hid, ct_imag_inp + ct_imag_hid], dim=1))
+               complex_product(rt, torch.cat([ct_real_inp + ct_real_hid, ct_imag_inp + ct_imag_hid], dim=1)))
 
     return apply_complex_dropout(ct + zt * (h - ct), dropout, rng, do_dropout, dropout_type, operation)
 
@@ -142,9 +83,14 @@ def CLSTMCell(input, hidden, w_ih_real, w_ih_imag, w_hh_real, w_hh_imag,
     cellgate   = F.tanh(   torch.cat([  cellgate_real,   cellgate_imag], dim=1))
     outgate    = F.sigmoid(torch.cat([   outgate_real,    outgate_imag], dim=1))
 
-    cy = (forgetgate * c) + (ingate * cellgate)
-    hy = outgate * F.tanh(cy)
+    
+    fc = complex_product(forgetgate, c)
+    ic = complex_product(ingate, cellgate)       
 
+    cy = fc + ic
+    hy = complex_product(outgate, F.tanh(cy))
+    #cy = forgetgate * c + ingate * cellgate
+    #hy = outgate * F.tanh(cy)
     return apply_complex_dropout(hy, dropout, rng, do_dropout, dropout_type, operation), cy
 
 
@@ -212,95 +158,104 @@ def CRUCell(input, hidden, w_ih_real, w_ih_imag,
 
     return apply_complex_dropout(hy, dropout, rng, do_dropout, dropout_type, operation)
 
+#
+# QUATERNION
+#
 
-def OldCRUCell(input, hidden, w_ih_real, w_ih_imag,
-               w_hh_real, w_hh_imag, wpick_cand_real,
-               wpick_cand_imag, wpick_h_real, wpick_h_imag,
-               b_ih, b_hh, b_pick_h, b_pick_cand,
-               dropout, train, rng, dropout_type='complex',
-               operation='linear', **opargs):
+def QRNNBaseCell(input, hidden,  w_ih_r, w_ih_i, w_ih_j, w_ih_k,
+                             w_hh_r, w_hh_i, w_hh_j, w_hh_k,
+                             b_ih, b_hh, dropout, train, rng, 
+                             dropout_type='quaternion',
+                             operation='linear', **opargs):
 
-    if operation not in {'convolution', 'linear'}:
-        raise Exception("the operations performed are either 'convolution' or 'linear'."
+    if operation not in {'rotation', 'linear'}:
+        raise Exception("the operations performed are either 'rotation' or 'linear'."
                         " Found operation = " + str(operation))
 
-    complexop = complex_conv if operation == 'convolution' else complex_linear
+    quatop = quaternion_rotation if operation == 'rotation' else quaternion_linear
 
     do_dropout = train and dropout > 0.0
 
     h = hidden.squeeze(0)
-    h = get_normalized(h, input_type=operation)
+    st_rt_ct_inp = quatop(input,  w_ih_r, w_ih_i, w_ih_j, w_ih_k, b_ih, **opargs)
+    st_rt_ct_hid = quatop(h,      w_hh_r, w_hh_i, w_hh_j, w_hh_k, b_hh, **opargs)
+    
+    (st_r_inp, st_i_inp, st_j_inp, st_k_inp) = st_rt_ct_inp.chunk(4, 1)
+    (st_r_hid, st_i_hid, st_j_hid, st_k_hid) = st_rt_ct_hid.chunk(4, 1)
+    
+    st = F.tanh(torch.cat([st_r_inp + st_r_hid, st_i_inp + st_i_hid, st_j_inp + st_j_hid, st_k_inp + st_k_hid], dim=1))
 
-    inp_amp_candidate = complexop(input,  w_ih_real, w_ih_imag, b_ih, **opargs)
-    hid_amp_candidate = complexop(h,      w_hh_real, w_hh_imag, b_hh, **opargs)
-    amp_and_candidate = inp_amp_candidate + hid_amp_candidate
+    return apply_quaternion_dropout(st, dropout, rng, do_dropout, dropout_type, operation)
 
-    amp_real, candidate_real, amp_imag, candidate_imag = amp_and_candidate.chunk(4, 1)
-    amp         = torch.cat([amp_real, amp_imag], dim=1)
-    candidate   = torch.cat([candidate_real, candidate_imag], dim=1)
-    if operation == 'linear':
-        ampgate = get_modulus(amp, vector_form=True)
-        candidate_t = F.tanh(candidate) * ampgate.repeat(1, 2)
-    else:  # (which means if operation is convolutional)
-        ampgate = get_modulus(amp, input_type='convolution')
-        ampgate = ampgate.repeat(1, 2)
-        if   candidate.dim() == 3:
-            ampgate = ampgate.unsqueeze(-1).expand_as(candidate)
-        elif candidate.dim() == 4:
-            ampgate = ampgate.unsqueeze(-1).unsqueeze(-1).expand_as(candidate)
-        elif candidate.dim() == 5:
-            ampgate = ampgate.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).expand_as(candidate)
-        else:
-            raise RuntimeError(
-                "complex convolution accepts only input of dimension 3, 4 or 5."
-                " candidate.dim = " + str(candidate.dim())
-            )
-        candidate_t = F.tanh(candidate) * ampgate
+def QGRUCell(input, hidden,  w_ih_r, w_ih_i, w_ih_j, w_ih_k,
+                             w_hh_r, w_hh_i, w_hh_j, w_hh_k,
+                             b_ih, b_hh, dropout, train, rng, 
+                             dropout_type='quaternion',
+                             operation='linear', **opargs):
 
-    candidate_t = get_normalized(candidate_t, input_type=operation)
+    if operation not in {'rotation', 'linear'}:
+        raise Exception("the operations performed are either 'rotation' or 'linear'."
+                        " Found operation = " + str(operation))
 
-    hidden_pre_update    = complexop(h,           wpick_h_real,    wpick_h_imag,       b_pick_h,    **opargs)
-    candidate_pre_update = complexop(candidate_t, wpick_cand_real, wpick_cand_imag,    b_pick_cand, **opargs)
+    quatop = quaternion_rotation if operation == 'rotation' else quaternion_linear
 
-    update_hid_candidate = hidden_pre_update + candidate_pre_update
-    (hidden_update_real, candidate_update_real,
-     hidden_update_imag, candidate_update_imag) = update_hid_candidate.chunk(4, 1)
-    hidden_update        = torch.cat([hidden_update_real, hidden_update_imag], dim=1)
-    candidate_update     = torch.cat([candidate_update_real, candidate_update_imag], dim=1)
+    do_dropout = train and dropout > 0.0
 
-    if operation == 'linear':
-        hidden_update_amp    = get_modulus(hidden_update,    vector_form=True)
-        candidate_update_amp = get_modulus(candidate_update, vector_form=True)
-        new_h = h * hidden_update_amp.repeat(1, 2) + candidate_t * candidate_update_amp.repeat(1, 2)
-    else:  # (which means if operation is convolutional)
-        hidden_update_amp = get_modulus(hidden_update, input_type='convolution')
-        hidden_update_amp = hidden_update_amp.repeat(1, 2)
-        if   h.dim() == 3:
-            hidden_update_amp = hidden_update_amp.unsqueeze(-1).expand_as(h)
-        elif h.dim() == 4:
-            hidden_update_amp = hidden_update_amp.unsqueeze(-1).unsqueeze(-1).expand_as(h)
-        elif h.dim() == 5:
-            hidden_update_amp = hidden_update_amp.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).expand_as(h)
-        else:
-            raise RuntimeError(
-                "complex convolution accepts only input of dimension 3, 4 or 5."
-                " h.dim = " + str(h.dim())
-            )
+    h = hidden.squeeze(0)
+    zt_rt_ct_inp = quatop(input,  w_ih_r, w_ih_i, w_ih_j, w_ih_k, b_ih, **opargs)
+    zt_rt_ct_hid = quatop(h,      w_hh_r, w_hh_i, w_hh_j, w_hh_k, b_hh, **opargs)
+    (zt_r_inp, rt_r_inp, ct_r_inp, 
+    zt_i_inp, rt_i_inp, ct_i_inp, 
+    zt_j_inp, rt_j_inp, ct_j_inp, 
+    zt_k_inp, rt_k_inp, ct_k_inp) = zt_rt_ct_inp.chunk(12, 1)
+    (zt_r_hid, rt_r_hid, ct_r_hid, 
+    zt_i_hid, rt_i_hid, ct_i_hid, 
+    zt_j_hid, rt_j_hid, ct_j_hid, 
+    zt_k_hid, rt_k_hid, ct_k_hid) = zt_rt_ct_hid.chunk(12, 1)
+    
+    zt = F.sigmoid(torch.cat([zt_r_inp + zt_r_hid, zt_i_inp + zt_i_hid, zt_j_inp + zt_j_hid, zt_k_inp + zt_k_hid], dim=1))
+    rt = F.sigmoid(torch.cat([rt_r_inp + rt_r_hid, rt_i_inp + rt_i_hid, rt_j_inp + rt_j_hid, rt_k_inp + rt_k_hid], dim=1))
+    ct = F.tanh(torch.cat([ct_r_inp, ct_i_inp, ct_j_inp, ct_k_inp], dim=1) + \
+                hamilton_product(rt, torch.cat([ct_r_inp + ct_r_hid, ct_i_inp + ct_i_hid, ct_j_inp + ct_j_hid, ct_k_inp + ct_k_hid], dim=1)))
 
-        candidate_update_amp = get_modulus(candidate_update, input_type='convolution')
-        candidate_update_amp = candidate_update_amp.repeat(1, 2)
-        if   candidate_t.dim() == 3:
-            candidate_update_amp = candidate_update_amp.unsqueeze(-1).expand_as(candidate_t)
-        elif candidate_t.dim() == 4:
-            candidate_update_amp = candidate_update_amp.unsqueeze(-1).unsqueeze(-1).expand_as(candidate_t)
-        elif candidate_t.dim() == 5:
-            candidate_update_amp = candidate_update_amp.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).expand_as(candidate_t)
-        else:
-            raise RuntimeError(
-                "complex convolution accepts only input of dimension 3, 4 or 5."
-                " candidate_t.dim = " + str(candidate_t.dim())
-            )
-        
-        new_h = h * hidden_update_amp + candidate_t * candidate_update_amp
+    return apply_quaternion_dropout(ct + zt * (h - ct), dropout, rng, do_dropout, dropout_type, operation)
 
-    return apply_complex_dropout(new_h, dropout, rng, do_dropout, dropout_type, operation)
+def QLSTMCell(input, hidden, w_ih_r, w_ih_i, w_ih_j, w_ih_k,
+                             w_hh_r, w_hh_i, w_hh_j, w_hh_k,
+                             b_ih, b_hh, dropout, train, rng, 
+                             dropout_type='quaternion',
+                             operation='linear', **opargs):
+
+    if operation not in {'rotation', 'linear'}:
+        raise Exception("the operations performed are either 'rotation' or 'linear'."
+                        " Found operation = " + str(operation))
+
+    quatop = quaternion_rotation if operation == 'rotation' else quaternion_linear
+
+    do_dropout = train and dropout > 0.0
+
+    hx, cx = hidden
+    h = hx.squeeze(0)
+    c = cx.squeeze(0)
+
+    gates = quatop(input, w_ih_r, w_ih_i, w_ih_j, w_ih_k, b_ih, **opargs) + quatop(h, w_hh_r, w_hh_i, w_hh_j, w_hh_k, b_hh, **opargs)
+    
+    (ingate_r, forgetgate_r, cellgate_r, outgate_r,
+     ingate_i, forgetgate_i, cellgate_i, outgate_i,
+     ingate_j, forgetgate_j, cellgate_j, outgate_j,
+     ingate_k, forgetgate_k, cellgate_k, outgate_k) = gates.chunk(16, 1)
+      
+    ingate     = F.sigmoid(torch.cat([    ingate_r,     ingate_i,     ingate_j,     ingate_k], dim=1))
+    forgetgate = F.sigmoid(torch.cat([forgetgate_r, forgetgate_i, forgetgate_j, forgetgate_k], dim=1))
+    cellgate   = F.tanh(   torch.cat([  cellgate_r,   cellgate_i,   cellgate_j,   cellgate_k], dim=1))
+    outgate    = F.sigmoid(torch.cat([   outgate_r,    outgate_i,    outgate_j,    outgate_k], dim=1))
+
+    fc = hamilton_product(forgetgate, c)
+    ic = hamilton_product(ingate, cellgate)
+    cy = fc + ic
+    #cy = (forgetgate * c) + (ingate * cellgate)
+    hy = hamilton_product(outgate, F.tanh(cy))
+    #cy = (forgetgate * c) + (ingate * cellgate)
+    #hy = outgate * F.tanh(cy)
+    return apply_quaternion_dropout(hy, dropout, rng, do_dropout, dropout_type, operation), cy
+

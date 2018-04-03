@@ -20,22 +20,6 @@ def check_input(input):
             " input.size()[1] = " + str(nb_hidden)
         )
 
-def check_conv_input(input):
-    if input.dim() not in {3, 4, 5}:
-        raise Exception(
-            "complex convolution accepts only input of dimension 3, 4 or 5."
-            " input.dim = " + str(input.dim())
-        )
-
-    nb_channels = input.size()[1]
-
-    if nb_channels % 2 != 0:
-        raise Exception(
-            "complex Tensors have to have an even number of feature maps."
-            " input.size()[1] = " + str(nb_channels)
-        )
-
-
 def get_real(input, input_type='linear'):
     if   input_type == 'linear':
         check_input(input)
@@ -120,6 +104,31 @@ def get_normalized(input, eps=0.001, threshold=1, input_type='linear'):
         mask = data_modulus < threshold
         return (input / (data_modulus + eps)) * (1 - mask.type_as(input)) + input * mask.type_as(input)
 
+def complex_product(z0, z1):
+    """
+    Applies a complex product z0 * z1:
+    Shape:
+        - z0, z1 should be (Batch_size, Complex_number)
+        (xx' - yy') + (xy' + x'y)i
+    """
+
+    # NEED TO CHECK THE SHAPE OF THE INPUT
+    #check_input(input)
+
+    #xx' and yy'
+    r_base = torch.mul(z0,z1)
+
+    #(xx' - yy')
+    real   = get_real(r_base) - get_imag(r_base)
+
+    #xy' and x'y
+    i_base = torch.mul(z0, torch.cat([get_imag(z1), get_real(z1)], dim=1))
+
+    #(xy' + x'y)
+    imag   = get_real(i_base) + get_imag(i_base)
+
+    return torch.cat([real, imag], dim=1)
+
 
 def complex_linear(input, real_weight, imag_weight, bias=None, **kwargs):
     """
@@ -158,35 +167,6 @@ def complex_linear(input, real_weight, imag_weight, bias=None, **kwargs):
         return torch.addmm(bias, input, cat_kernels_4_complex)
     else:
         return input.mm(cat_kernels_4_complex)
-
-
-def complex_conv(input, real_weight, imag_weight, bias=None, **convargs):
-    """
-    Applies a complex convolution to the incoming data:
-    Shape:
-        - Input:       (batch_size, nb_complex_channels_in * 2, *signal_length)
-        - real_weight: (nb_complex_channels_out, nb_complex_channels_in, *kernel_size)
-        - imag_weight: (nb_complex_channels_out, nb_complex_channels_in, *kernel_size)
-        - Bias:        (nb_complex_channels_out * 2)
-        - Output:      (batch_size, nb_complex_channels_out * 2, *signal_out_length)
-        - convArgs =   {"strides":        strides,
-                        "padding":        padding,
-                        "dilation_rate":  dilation}
-    """
-    check_conv_input(input)
-    cat_kernels_4_real = torch.cat([real_weight, -imag_weight], dim=1)
-    cat_kernels_4_imag = torch.cat([imag_weight,  real_weight], dim=1)
-    cat_kernels_4_complex = torch.cat([cat_kernels_4_real, cat_kernels_4_imag], dim=0)
-    if   input.dim() == 3:
-        convfunc = F.conv1d
-    elif input.dim() == 4:
-        convfunc = F.conv2d
-    elif input.dim() == 5:
-        convfunc = F.conv3d
-    else:
-        raise Exception("The convolutional input is either 3, 4 or 5 dimensions."
-                        " input.dim = " + str(input.dim()))
-    return convfunc(input, cat_kernels_4_complex, bias, **convargs)
 
 
 def unitary_init(in_features, out_features, rng, criterion='glorot'):

@@ -100,8 +100,8 @@ class BidirectionalConvolutionalRNN(Module):
             'init_criterion'  :   init_criterion, 'weight_init'     : weight_init,
             'seed'            :   seed
         }
-        self.forwardcrn   =  ConvolutionalRNN(reverse=False, **dict(**arguments, **kwargs))
-        self.backwardcrn  =  ConvolutionalRNN(reverse=True,  **dict(**arguments, **kwargs))
+        self.forwardcrn   =  ConvolutionalRNN(reverse=False, **dict(**arguments **kwargs))
+        self.backwardcrn  =  ConvolutionalRNN(reverse=True,  **dict(**arguments **kwargs))
 
     def reset_parameters(self):
         self.forwardcrn.reset_parameters()
