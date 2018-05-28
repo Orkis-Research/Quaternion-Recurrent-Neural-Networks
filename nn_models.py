@@ -4,16 +4,17 @@ from torch.nn import Parameter
 from torch.nn import functional as F
 import torch.optim
 from torch.autograd import Variable
+from quaternion_models import QuaternionLinearAutograd, QuaternionLinear
 
 class QRNN(nn.Module):
-    def __init__(self):
+    def __init__(self, feat_size, hidden_size, nb_hidden):
         super(QRNN, self).__init__()
         
         # Reading options:
-        self.input_dim=8
-        self.hidden_dim=1024
-        self.N_hid=1
-        self.num_classes=8
+        self.input_dim=feat_size
+        self.hidden_dim=hidden_size
+        self.N_hid=nb_hidden
+        self.num_classes=feat_size
     
         # List initialization
         self.wx  = nn.ModuleList([]) # Update Gate
@@ -67,14 +68,14 @@ class QRNN(nn.Module):
         return torch.cat(out,0)
 
 class RNN(nn.Module):
-    def __init__(self):
+    def __init__(self, feat_size, hidden_size, nb_hidden):
         super(RNN, self).__init__()
         
         # Reading options:
-        self.input_dim=8
-        self.hidden_dim=512
-        self.N_hid=1
-        self.num_classes=8
+        self.input_dim=feat_size
+        self.hidden_dim=hidden_size
+        self.N_hid=nb_hidden
+        self.num_classes=feat_size
        
         # List initialization
         self.wx  = nn.ModuleList([]) # Update Gate

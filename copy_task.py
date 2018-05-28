@@ -1,31 +1,32 @@
-from __future__ import division
+from __future__          import division
 import sys
 import torch
-import torch.nn as nn
-from torch.nn import Parameter
-from torch.nn import functional as F
+import torch.nn          as nn
+from torch.nn            import Parameter
+from torch.nn            import functional as F
 import torch.optim
-from torch.autograd import Variable
-import numpy as np
+from torch.autograd      import Variable
+import numpy             as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from quaternion_models import QuaternionLinearAutograd, QuaternionLinear
-from nn_models         import QRNN, RNN
+from nn_models           import QRNN, RNN
 
+#
+# PLOT Functions
+#
 def getPlotArray(pred, inp):
 
     pred = pred.reshape(pred.shape[1], pred.shape[0], pred.shape[2])
     inp = inp.reshape(inp.shape[1], inp.shape[0], inp.shape[2])
-
     return (np.swapaxes(pred[0],1,0)),(np.swapaxes(inp[0],1,0))
 
+#
+# Convert to torch.Variable 
+#
 def tovar(x):
     return Variable(torch.FloatTensor(x).cuda(), requires_grad = False)
-
-def toivar(x):
-    return Variable(torch.LongTensor(x).cuda(), requires_grad = False)
 
 def getTask(N_BATCH, SEQ_LENGTH, FEAT_SIZE):
     data = []
@@ -48,7 +49,7 @@ SEQ_LENGTH       = 20
 FEAT_SIZE        = 8
 EPOCHS           = 15000
 RNN_HIDDEN_SIZE  = 512
-QRNN_HIDDEN_SIZE = 2048
+QRNN_HIDDEN_SIZE = 1024
 RNN_NB_HIDDEN    = 1
 QRNN_NB_HIDDEN   = 1
 
@@ -63,8 +64,8 @@ accs_r        = []
 accs_q        = []
 accs_test     = []
 
-net_r = RNN().cuda()
-net_q = QRNN().cuda()
+net_r = RNN(FEAT_SIZE, RNN_HIDDEN_SIZE, RNN_NB_HIDDEN).cuda()
+net_q = QRNN(FEAT_SIZE, QRNN_HIDDEN_SIZE, QRNN_NB_HIDDEN).cuda()
 
 nb_param_q = sum(p.numel() for p in net_q.parameters() if p.requires_grad)
 nb_param_r = sum(p.numel() for p in net_r.parameters() if p.requires_grad)
@@ -83,6 +84,7 @@ break_r = False
 break_q = False
 for epoch in range(EPOCHS):
 
+    # RNN Training
     if break_r == False:
         net_r.zero_grad()
         p = net_r.forward(tovar(train))
@@ -105,6 +107,7 @@ for epoch in range(EPOCHS):
             string = "(RNN) It : "+str(epoch)+" | Train Loss = "+str(float(val_loss.data))+" | Train Acc = "+str(acc)
             print(string)
 
+    # QRNN Training
     if break_q == False:
         net_q.zero_grad()
         p = net_q.forward(tovar(train))
@@ -125,7 +128,8 @@ for epoch in range(EPOCHS):
         if (epoch % 10) == 0:
             string = "(QRNN) It : "+str(epoch)+" | Train Loss = "+str(float(val_loss.data))+" | Train Acc = "+str(acc)
             print(string)
-
+            
+    # IF QRNN & RNN Training are done, end.
     if break_q == True and break_r == True:
         break
 
