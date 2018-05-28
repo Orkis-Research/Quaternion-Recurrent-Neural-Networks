@@ -5,7 +5,7 @@ By default, the experiments follow the experimental protocol described in the pa
 
 Requirements
 ------------
-A GPU with a running CUDA install is required.
+A GPU with a running CUDA installation is required.
 ```bash
 pip install torch torchvision matplotlib      
 ```
