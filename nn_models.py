@@ -17,8 +17,8 @@ class QRNN(nn.Module):
         self.num_classes=feat_size
     
         # List initialization
-        self.wx  = nn.ModuleList([]) # Update Gate
-        self.uh  = nn.ModuleList([]) # Candidate (feed-forward)
+        self.wx  = nn.ModuleList([]) 
+        self.uh  = nn.ModuleList([]) 
         
         # Activation        
         self.act=nn.Sigmoid()
@@ -78,8 +78,8 @@ class RNN(nn.Module):
         self.num_classes=feat_size
        
         # List initialization
-        self.wx  = nn.ModuleList([]) # Update Gate
-        self.uh  = nn.ModuleList([]) # Candidate (feed-forward)
+        self.wx  = nn.ModuleList([]) 
+        self.uh  = nn.ModuleList([]) 
         
         # Activation  
         self.act=nn.Sigmoid()
