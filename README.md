@@ -1,7 +1,7 @@
 # Quaternion RNN
 
 This example trains both a Quaternion-valued RNN and a Real-valued RNN on a simple copy-task, and generates the corresponding plots.
-By default, the experiments follow the experimental protocol described in the paper : .
+By default, the experiments follow the experimental protocol described in the paper : [Quaternion Recurrent Neural Networks](https://arxiv.org/abs/1806.04418).
 
 Requirements
 ------------
@@ -17,11 +17,3 @@ Usage
 python copy_task.py        
 ```
 
-Citation
---------
-
-Please cite our work as
-
-```
-
-```
