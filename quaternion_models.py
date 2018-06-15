@@ -69,7 +69,6 @@ class QuaternionLinearAutograd(Module):
     def forward(self, input):
         # See the autograd section for explanation of what happens here.
         return quaternion_linear(input, self.r_weight, self.i_weight, self.j_weight, self.k_weight, self.bias)
-        #return quaternion_linear(input, self.r_weight, self.i_weight, self.j_weight, self.k_weight, self.bias)
 
     def __repr__(self):
         return self.__class__.__name__ + '(' \
@@ -136,7 +135,6 @@ class QuaternionLinear(Module):
 
     def forward(self, input):
         # See the autograd section for explanation of what happens here.
-        #return quaternion_linear(input, self.r_weight, self.i_weight, self.j_weight, self.k_weight, self.bias)
         if input.dim() == 3:
             T, N, C = input.size()
             input = input.view(T * N, C)
@@ -148,7 +146,6 @@ class QuaternionLinear(Module):
             raise NotImplementedError
         
         return output
-        #return quaternion_linear(input, self.r_weight, self.i_weight, self.j_weight, self.k_weight, self.bias)
 
     def __repr__(self):
         return self.__class__.__name__ + '(' \
