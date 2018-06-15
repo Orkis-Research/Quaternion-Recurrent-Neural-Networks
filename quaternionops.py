@@ -5,50 +5,6 @@ import torch.nn.functional as F
 import numpy as np
 from numpy.random import RandomState
 
-
-############ COMPLEX GETTERS
-
-def get_real(input, input_type='linear'):
-    #if   input_type == 'linear':
-        #check_input(input)
-    #elif input_type == 'convolution':
-     #   check_conv_input(input)
-    #else:
-     #   raise Exception("the input_type can be either 'convolution' or 'linear'."
-     #                   " Found input_type = " + str(input_type))
-
-    if input_type == 'linear':
-        nb_hidden = input.size()[-1]
-        if input.dim() == 2:
-            return input.narrow(1, 0, nb_hidden // 2) # input[:, :nb_hidden / 2]
-        elif input.dim() == 3:
-            return input.narrow(2, 0, nb_hidden // 2) # input[:, :, :nb_hidden / 2]
-    else:
-        nb_featmaps = input.size()[1]
-        return input.narrow(1, 0, nb_featmaps // 2)
-
-
-def get_imag(input, input_type='linear'):
-    #if   input_type == 'linear':
-        #check_input(input)
-    #elif input_type == 'convolution':
-    #    check_conv_input(input)
-    #else:
-    #    raise Exception("the input_type can be either 'convolution' or 'linear'."
-     #                   " Found input_type = " + str(input_type))
-
-    if input_type == 'linear':
-        nb_hidden = input.size()[-1]
-        if input.dim() == 2:
-            return input.narrow(1, nb_hidden // 2, nb_hidden // 2) # input[:, :nb_hidden / 2]
-        elif input.dim() == 3:
-            return input.narrow(2, nb_hidden // 2, nb_hidden // 2) # input[:, :, :nb_hidden / 2]
-    else:
-        nb_featmaps = input.size()[1]
-        return input.narrow(1, nb_featmaps // 2, nb_featmaps // 2)
-
-##############
-
 def check_input(input):
 
     if input.dim() not in {2, 3}:
@@ -121,47 +77,6 @@ def get_normalized(input, eps=0.0001):
     elif input.dim() == 3:
         data_modulus_repeated = data_modulus.repeat(1, 1, 4)
     return input / (data_modulus_repeated.expand_as(input) + eps)
-
-def quaternion_rotation(input, r_weight, i_weight, j_weight, k_weight, bias=None):
-    """
-    Applies a quaternion rotation (WIW^T) transformation to the incoming data:
-    Shape:
-        - Input:       (batch_size, nb_quaternion_elements_in * 4)
-        - real_weight: (nb_quaternion_elements, nb_quaternion_elements_out)
-        - imag_weight: (nb_quaternion_elements, nb_quaternion_elements_out)
-        - Bias:        (nb_quaternion_elements_out * 4)
-        - Output:      (batch_size, nb_quaternion_elements_out * 4)
-    """
-
-    check_input(input)
-    cat_kernels_4_r = torch.cat([r_weight, -i_weight, -j_weight, -k_weight], dim=0)
-    cat_kernels_4_i = torch.cat([i_weight,  r_weight, -k_weight, j_weight], dim=0)
-    cat_kernels_4_j = torch.cat([j_weight,  k_weight, r_weight, -i_weight], dim=0)
-    cat_kernels_4_k = torch.cat([k_weight,  -j_weight, i_weight, r_weight], dim=0)
-    cat_kernels_4_quaternion = torch.cat([cat_kernels_4_r, cat_kernels_4_i, cat_kernels_4_j, cat_kernels_4_k], dim=1)
-    
-    cat_kernels_4_rT = torch.cat([r_weight, i_weight, j_weight, k_weight], dim=0)
-    cat_kernels_4_iT = torch.cat([-i_weight,  r_weight, k_weight, -j_weight], dim=0)
-    cat_kernels_4_jT = torch.cat([-j_weight,  -k_weight, r_weight, i_weight], dim=0)
-    cat_kernels_4_kT = torch.cat([-k_weight,  j_weight, -i_weight, r_weight], dim=0)
-    cat_kernels_4_quaternion_T = torch.cat([cat_kernels_4_rT, cat_kernels_4_iT, cat_kernels_4_jT, cat_kernels_4_kT], dim=1)
-    
-    if input.dim() == 2 :
-        if bias is not None:
-            return torch.addmm(bias, torch.mm(cat_kernels_4_quaternion,input), cat_kernels_4_quaternion_T)
-        else: 
-            return torch.mm(torch.mm(cat_kernels_4_quaternion,input), cat_kernels_4_quaternion_T)
-    else:
-       # print(cat_kernels_4_quaternion)
-        output = torch.matmul(torch.matmul(cat_kernels_4_quaternion,input), cat_kernels_4_quaternion_T)
-        if bias is not None:
-            return output+bias
-        else:
-            return output
-
-
-
-
 
 def quaternion_linear(input, r_weight, i_weight, j_weight, k_weight, bias=True):
     """
