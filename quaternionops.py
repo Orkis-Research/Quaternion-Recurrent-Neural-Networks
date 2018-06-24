@@ -20,9 +20,9 @@ def check_input(input):
             "Quaternion Tensors must be divisible by 4."
             " input.size()[1] = " + str(nb_hidden)
         )
-
-######## Getters
-
+#
+# Getters
+#
 def get_r(input):
     check_input(input)
     nb_hidden = input.size()[-1]
