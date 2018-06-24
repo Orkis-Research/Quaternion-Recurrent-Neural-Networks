@@ -24,7 +24,6 @@ class QRNN(nn.Module):
         self.act=nn.Sigmoid()
 
         curr_dim=self.input_dim
-        
         for i in range(self.N_hid):
                       
           self.wx.append(nn.Linear(curr_dim, self.hidden_dim))
@@ -39,12 +38,10 @@ class QRNN(nn.Module):
     
     def forward(self, x):
     
-
         h_init = Variable(torch.zeros(x.shape[1],self. hidden_dim))   
         x      = x.cuda()
         h_init = h_init.cuda()
-
-            
+        
         wx_out=self.wx[0](x)
         hiddens = []
         pre_act = []
@@ -54,7 +51,7 @@ class QRNN(nn.Module):
             at=wx_out[k]+self.uh[0](h)
             h=at
 
-        # Delimiters, time to generate !
+        # Delimiter, time to generate !
         out = []
         hiddens = []
         pre_act = []
@@ -100,12 +97,9 @@ class RNN(nn.Module):
     
     def forward(self, x):
     
-
         h_init = Variable(torch.zeros(x.shape[1],self. hidden_dim))   
         x      = x.cuda()
-        h_init = h_init.cuda()
-
-            
+        h_init = h_init.cuda()     
         wx_out=self.wx[0](x)
 
         hiddens = []
