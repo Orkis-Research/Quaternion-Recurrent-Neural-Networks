@@ -27,34 +27,34 @@ def get_r(input):
     check_input(input)
     nb_hidden = input.size()[-1]
     if input.dim() == 2:
-        return input.narrow(1, 0, nb_hidden // 4) # input[:, :nb_hidden / 2]
+        return input.narrow(1, 0, nb_hidden // 4) 
     elif input.dim() == 3:
-        return input.narrow(2, 0, nb_hidden // 4) # input[:, :, :nb_hidden / 2]
+        return input.narrow(2, 0, nb_hidden // 4) 
 
 
 def get_i(input):
     check_input(input)
     nb_hidden = input.size()[-1]
     if input.dim() == 2:
-        return input.narrow(1, nb_hidden // 4, nb_hidden // 4) # input[:, nb_hidden / 2:]
+        return input.narrow(1, nb_hidden // 4, nb_hidden // 4) 
     if input.dim() == 3:
-        return input.narrow(2, nb_hidden // 4, nb_hidden // 4) # input[:, :, nb_hidden / 2:]
+        return input.narrow(2, nb_hidden // 4, nb_hidden // 4) 
 
 def get_j(input):
     check_input(input)
     nb_hidden = input.size()[-1]
     if input.dim() == 2:
-        return input.narrow(1, nb_hidden // 2, nb_hidden // 4) # input[:, nb_hidden / 2:]
+        return input.narrow(1, nb_hidden // 2, nb_hidden // 4) 
     if input.dim() == 3:
-        return input.narrow(2, nb_hidden // 2, nb_hidden // 4) # input[:, :, nb_hidden / 2:]
+        return input.narrow(2, nb_hidden // 2, nb_hidden // 4) 
 
 def get_k(input):
     check_input(input)
     nb_hidden = input.size()[-1]
     if input.dim() == 2:
-        return input.narrow(1, nb_hidden - nb_hidden // 4, nb_hidden // 4) # input[:, nb_hidden / 2:]
+        return input.narrow(1, nb_hidden - nb_hidden // 4, nb_hidden // 4) 
     if input.dim() == 3:
-        return input.narrow(2, nb_hidden - nb_hidden // 4, nb_hidden // 4) # input[:, :, nb_hidden / 2:]
+        return input.narrow(2, nb_hidden - nb_hidden // 4, nb_hidden // 4) 
 
 
 def get_modulus(input, vector_form=False):
@@ -103,7 +103,6 @@ def quaternion_linear(input, r_weight, i_weight, j_weight, k_weight, bias=True):
         else: 
             return torch.mm(input, cat_kernels_4_quaternion)
     else:
-       # print(cat_kernels_4_quaternion)
         output = torch.matmul(input, cat_kernels_4_quaternion)
         if bias is not None:
             return output+bias
@@ -113,9 +112,7 @@ def quaternion_linear(input, r_weight, i_weight, j_weight, k_weight, bias=True):
 # Inherit from Function
 class QuaternionLinearFunction(torch.autograd.Function):
 
-    # Note that both forward and backward are @staticmethods
     @staticmethod
-    # bias is an optional argument
     def forward(ctx, input, r_weight, i_weight, j_weight, k_weight, bias=None):
         ctx.save_for_backward(input, r_weight, i_weight, j_weight, k_weight, bias)
         check_input(input)
@@ -124,8 +121,6 @@ class QuaternionLinearFunction(torch.autograd.Function):
         cat_kernels_4_j = torch.cat([j_weight,  k_weight, r_weight, -i_weight], dim=0)
         cat_kernels_4_k = torch.cat([k_weight,  -j_weight, i_weight, r_weight], dim=0)
         cat_kernels_4_quaternion = torch.cat([cat_kernels_4_r, cat_kernels_4_i, cat_kernels_4_j, cat_kernels_4_k], dim=1)
-        #w = torch.cat([w,w,w,w], dim=0)
-        #w = torch.cat([w,w,w,w], dim=1)
         if input.dim() == 2 :
             if bias is not None:
                 return torch.addmm(bias, input, cat_kernels_4_quaternion)
@@ -145,10 +140,6 @@ class QuaternionLinearFunction(torch.autograd.Function):
         input, r_weight, i_weight, j_weight, k_weight, bias = ctx.saved_tensors
         grad_input = grad_weight_r = grad_weight_i = grad_weight_j = grad_weight_k = grad_bias = None
         
-        #r_weight = r_weight.mul(-1)
-        #i_weight = i_weight.mul(-1)
-        #j_weight = j_weight.mul(-1)
-        #k_weight = k_weight.mul(-1)
         input_r = torch.cat([r_weight, -i_weight, -j_weight, -k_weight], dim=0)
         input_i = torch.cat([i_weight,  r_weight, -k_weight, j_weight], dim=0)
         input_j = torch.cat([j_weight,  k_weight, r_weight, -i_weight], dim=0)
@@ -156,9 +147,9 @@ class QuaternionLinearFunction(torch.autograd.Function):
         cat_kernels_4_quaternion_T = Variable(torch.cat([input_r, input_i, input_j, input_k], dim=1).permute(1,0), requires_grad=False)
 
         r = get_r(input)
-        i = get_i(input)#.mul(-1)
-        j = get_j(input)#.mul(-1)
-        k = get_k(input)#.mul(-1)
+        i = get_i(input)
+        j = get_j(input)
+        k = get_k(input)
         input_r = torch.cat([r, -i, -j, -k], dim=0)
         input_i = torch.cat([i,  r, -k, j], dim=0)
         input_j = torch.cat([j,  k, r, -i], dim=0)
@@ -192,9 +183,7 @@ class QuaternionLinearFunction(torch.autograd.Function):
 
 class LinearFunction(torch.autograd.Function):
 
-    # Note that both forward and backward are @staticmethods
     @staticmethod
-    # bias is an optional argument
     def forward(ctx, input, weight, bias=None):
         ctx.save_for_backward(input, weight, bias)
 
@@ -209,21 +198,12 @@ class LinearFunction(torch.autograd.Function):
                 output += bias.unsqueeze(0).expand_as(output)
             return output
 
-    # This function has only a single output, so it gets only one gradient
+
     @staticmethod
     def backward(ctx, grad_output):
-        # This is a pattern that is very convenient - at the top of backward
-        # unpack saved_tensors and initialize all gradients w.r.t. inputs to
-        # None. Thanks to the fact that additional trailing Nones are
-        # ignored, the return statement is simple even when the function has
-        # optional inputs.
+        
         input, weight, bias = ctx.saved_tensors
         grad_input = grad_weight = grad_bias = None
-
-        # These needs_input_grad checks are optional and there only to
-        # improve efficiency. If you want to make your code simpler, you can
-        # skip them. Returning gradients for inputs that don't require it is
-        # not an error.
         weight = Variable(weight, requires_grad=False)
         input  = Variable(input, requires_grad=False)
 
@@ -253,11 +233,7 @@ def hamilton_product(q0, q1):
         (rx' + xr' + yz' - zy')i +
         (ry' - xz' + yr' + zx')j +
         (rz' + xy' - yx' + zr')k + 
-    """
-
-    # NEED TO CHECK THE SHAPE OF THE INPUT
-    #check_input(input)
-    
+    """   
 
     q1_r = get_r(q1)
     q1_i = get_i(q1)
@@ -301,7 +277,8 @@ def unitary_init(in_features, out_features, rng, criterion='glorot'):
     v_i = np.random.uniform(0.0,1.0,number_of_weights)
     v_j = np.random.uniform(0.0,1.0,number_of_weights)
     v_k = np.random.uniform(0.0,1.0,number_of_weights)
-    #Make these unitary quaternion
+    
+    # Unitary quaternion
     for i in range(0, number_of_weights):
         norm = np.sqrt(v_r[i]**2 + v_i[i]**2 + v_j[i]**2 + v_k[i]**2)+0.0001
         v_r[i]/= norm
@@ -331,13 +308,14 @@ def quaternion_init(in_features, out_features, rng, criterion='glorot'):
         raise ValueError('Invalid criterion: ' + criterion)
     rng = RandomState(123)
     
-    #Generating randoms and purely imaginary quaternions :
+    # Generating randoms and purely imaginary quaternions :
     kernel_shape = (in_features, out_features)
     number_of_weights = np.prod(kernel_shape) 
     v_i = np.random.uniform(0.0,1.0,number_of_weights)
     v_j = np.random.uniform(0.0,1.0,number_of_weights)
     v_k = np.random.uniform(0.0,1.0,number_of_weights)
-    #Make these purely imaginary quaternions unitary
+    
+    # Purely imaginary quaternions unitary
     for i in range(0, number_of_weights):
     	norm = np.sqrt(v_i[i]**2 + v_j[i]**2 + v_k[i]**2)+0.0001
     	v_i[i]/= norm
