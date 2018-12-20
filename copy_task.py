@@ -1,4 +1,11 @@
-from __future__          import division
+##########################################################
+# pytorch-qnn v1.0                                     
+# Titouan Parcollet
+# LIA, Université d'Avignon et des Pays du Vaucluse
+# ORKIS, Aix-en-provence
+# October 2018
+##########################################################
+
 import sys
 import torch
 import torch.nn          as nn
@@ -7,56 +14,86 @@ from torch.nn            import functional as F
 import torch.optim
 from torch.autograd      import Variable
 import numpy             as np
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-
-from nn_models           import QRNN, RNN
-
-#
-# PLOT Functions
-#
-def getPlotArray(pred, inp):
-
-    pred = pred.reshape(pred.shape[1], pred.shape[0], pred.shape[2])
-    inp = inp.reshape(inp.shape[1], inp.shape[0], inp.shape[2])
-    return (np.swapaxes(pred[0],1,0)),(np.swapaxes(inp[0],1,0))
+from recurrent_models    import QRNN, RNN, LSTM, QLSTM
 
 #
 # Convert to torch.Variable 
 #
 def tovar(x):
-    return Variable(torch.FloatTensor(x).cuda(), requires_grad = False)
+    return Variable(torch.FloatTensor(x).cuda())
 
-def getTask(N_BATCH, SEQ_LENGTH, FEAT_SIZE):
-    data = []
-    seq  = []
+def getTask(N_BATCH, SEQ_LENGTH, FEAT_SIZE, BLANK_SIZE, embedding):
+    data   = []
+    lab    = []
+    seq    = []
+    target = []
+    
     for i in range(N_BATCH):
+
+        # Target values of blank and delim
+        blank = FEAT_SIZE 
+        delim = FEAT_SIZE + 1
+
+        # Embedding
+        blank_emb = FEAT_SIZE
+        blank_emb = torch.tensor(blank_emb, dtype=torch.long)
+        blank_emb = embedding(blank_emb).data.numpy()
+        delim_emb = FEAT_SIZE + 1
+        delim_emb = torch.tensor(delim_emb, dtype=torch.long)
+        delim_emb = embedding(delim_emb).data.numpy()
+
+        random_index_list = []
+
         for j in range(SEQ_LENGTH):
-            feat = np.random.randint(2, size=FEAT_SIZE)
+            random = np.random.randint(FEAT_SIZE, size=(1))
+            feat   = torch.tensor(random, dtype=torch.long)
+            feat   = embedding(feat).data.numpy()[0]
+            random_index_list.append(random)
+
             seq.append(feat)
+            target.append(blank)        
+
+        # BLANK
+        for j in range(BLANK_SIZE - 1):
+            seq.append(blank_emb)
+            target.append(blank)
+
+        # Append a last blank to target for delimiter in input
+        target.append(blank)  
+
+        # DELIMITER
+        seq.append(delim_emb)
+
+        # Append input to target
+        for j in random_index_list:
+            
+            target.append(j)
+            seq.append(delim_emb)
+
         data.append(seq)
+        lab.append(target)
+
         seq = []
-    return np.array(data)
+        target = []
+
+    return np.array(data), np.array(lab)
 
 #
 # DEFINING THE TASK
 #
 
-N_BATCH_TRAIN    = 2500
-N_BATCH_TEST     = 1
-SEQ_LENGTH       = 20
-FEAT_SIZE        = 8
-EPOCHS           = 15000
-RNN_HIDDEN_SIZE  = 512
-QRNN_HIDDEN_SIZE = 1024
-RNN_NB_HIDDEN    = 1
-QRNN_NB_HIDDEN   = 1
+if len(sys.argv) > 1:
+    BLANK_SIZE = int(sys.argv[1])
+else:
+    BLANK_SIZE = 25
 
-train = getTask(N_BATCH_TRAIN,SEQ_LENGTH, FEAT_SIZE)
-train = train.reshape((SEQ_LENGTH,N_BATCH_TRAIN,FEAT_SIZE))
-test  = getTask(N_BATCH_TEST,SEQ_LENGTH, FEAT_SIZE)
-test  = test.reshape((SEQ_LENGTH,N_BATCH_TEST,FEAT_SIZE))
+CUDA             = True
+N_BATCH_TRAIN    = 10
+SEQ_LENGTH       = 10
+FEAT_SIZE        = 8
+EPOCHS           = 2000
+RNN_HIDDEN_SIZE  = 40
+QRNN_HIDDEN_SIZE = 80
 
 losses_r      = []
 losses_q      = []
@@ -64,8 +101,10 @@ accs_r        = []
 accs_q        = []
 accs_test     = []
 
-net_r = RNN(FEAT_SIZE, RNN_HIDDEN_SIZE, RNN_NB_HIDDEN).cuda()
-net_q = QRNN(FEAT_SIZE, QRNN_HIDDEN_SIZE, QRNN_NB_HIDDEN).cuda()
+net_r = LSTM(FEAT_SIZE, RNN_HIDDEN_SIZE, CUDA).cuda()
+net_q = QLSTM(FEAT_SIZE, QRNN_HIDDEN_SIZE, CUDA).cuda()
+
+emb   = nn.Embedding(FEAT_SIZE+2, FEAT_SIZE, max_norm=1.0)
 
 nb_param_q = sum(p.numel() for p in net_q.parameters() if p.requires_grad)
 nb_param_r = sum(p.numel() for p in net_r.parameters() if p.requires_grad)
@@ -82,121 +121,81 @@ print("(RNN)  Number of trainable parameters : "+str(nb_param_r))
 
 break_r = False
 break_q = False
+
+
 for epoch in range(EPOCHS):
 
-    # RNN Training
-    if break_r == False:
-        net_r.zero_grad()
-        p = net_r.forward(tovar(train))
-        loss = nn.BCELoss()
-        val_loss = loss(p, tovar(train))
-        val_loss.backward()
-        net_r.adam.step()
-        
-        # Train ACC and LOSS
-        p = p.cpu().data.numpy()
-        p[p>0.5]=1
-        p[p<0.5]=0
-        acc = np.sum(p == train) / train.size
+    #
+    # The input sequence size is 2 times the sequence length + number_of_blank - 1 + 1 
+    # (+ 1 for the delimiter). We generate N_BATCH_TRAIN new sequences each epoch
+    #
+    train, train_target = getTask(N_BATCH_TRAIN,SEQ_LENGTH, FEAT_SIZE, BLANK_SIZE, emb)
+
+    # Train shape must be (SEQ_LENGTH, BATCH_SIZE, FEATURE_SIZE) for QLSTM and LSTM
+    train = train.reshape((BLANK_SIZE+(2*SEQ_LENGTH),N_BATCH_TRAIN,FEAT_SIZE))
+
+    train_var        = tovar(train)
+    train_target_var = tovar(train_target)
+    
+    # NN Training
+    net_r.zero_grad()
+    p = net_r.forward(train_var)
+
+    # Pred. shape : (SEQ_LENGTH, BATCH_SIZE, FEATURE_SIZE) to (SEQ_LENGTH * BATCH_SIZE, FEATURE_SIZE)
+    predictions = p.view(-1, FEAT_SIZE+1)
+
+    # Target shape to (BATCH_SIZE)
+    targets  = train_target_var.view(-1)
+    loss     = nn.CrossEntropyLoss()
+    val_loss = loss(predictions, targets.long())
+
+    val_loss.backward()
+    net_r.adam.step()
+    
+    # Train ACC and LOSS
+    p       = p.cpu().data.numpy()
+    shape   = np.argmax(p, axis=2).shape
+    p       = np.reshape(np.argmax(p, axis=2), shape[0]*shape[1])
+    targets = targets.cpu().data.numpy()
+    acc     = np.sum( p == targets) / (train_target.size)
+
+    
+    if (epoch % 5) == 0:
         accs_r.append(acc)
-        if (epoch % 5) == 0:
-            losses_r.append(float(val_loss.data))
-        if acc>0.995:
-            break_r = True
-        if (epoch % 10) == 0:
-            string = "(RNN) It : "+str(epoch)+" | Train Loss = "+str(float(val_loss.data))+" | Train Acc = "+str(acc)
-            print(string)
+        losses_r.append(float(val_loss.data))
+    if (epoch % 10) == 0:
+        string = " (NN) It : "+str(epoch)+" | Train Loss = "+str(float(val_loss.data))+" | Train Acc = "+str(acc)
+        print(string)
 
-    # QRNN Training
-    if break_q == False:
-        net_q.zero_grad()
-        p = net_q.forward(tovar(train))
-        loss = nn.BCELoss()
-        val_loss = loss(p, tovar(train))
-        val_loss.backward()
-        net_q.adam.step()
-        p = p.cpu().data.numpy()
-        p[p>0.5]=1
-        p[p<0.5]=0
+    # QNN Training
+    net_q.zero_grad()
+    p           = net_q.forward(train_var)
+    predictions = p.view(-1, FEAT_SIZE+1)
+    targets     = train_target_var.view(-1)
+    loss        = nn.CrossEntropyLoss()
+    val_loss    = loss(predictions, targets.long())
 
-        acc = np.sum(p == train) / train.size
+    val_loss.backward()
+    net_q.adam.step()
+
+    p       = p.cpu().data.numpy()
+    shape   = np.argmax(p, axis=2).shape
+    p       = np.reshape(np.argmax(p, axis=2), shape[0]*shape[1])
+    targets = targets.cpu().data.numpy()
+    acc     = np.sum( p == targets) / (train_target.size)
+    
+    if (epoch % 5) == 0:
+        losses_q.append(float(val_loss.data))
         accs_q.append(acc)
-        if (epoch % 5) == 0:
-            losses_q.append(float(val_loss.data))
-        if acc>0.995:
-            break_q = True
-        if (epoch % 10) == 0:
-            string = "(QRNN) It : "+str(epoch)+" | Train Loss = "+str(float(val_loss.data))+" | Train Acc = "+str(acc)
-            print(string)
-            
-    # IF QRNN & RNN Training are done, end.
-    if break_q == True and break_r == True:
-        break
+    if (epoch % 10) == 0:
+        string = "(QNN) It : "+str(epoch)+" | Train Loss = "+str(float(val_loss.data))+" | Train Acc = "+str(acc)
+        print(string)
 
-print("Training Ended - Saving Plots")
+print("Training Ended - Saving Acc and losses in RES")
 
-#
-# Loss Curves
-#
-plt.plot(np.asarray(losses_q), 'b', label="QRNN")
-plt.plot(np.asarray(losses_r), 'r', label="RNN")
-plt.legend(loc='upper right')
-plt.ylabel('Training Loss')
-plt.xlabel('Epochs')
-plt.savefig("curves.pdf", dpi=1500, bbox_inches='tight')
-
-#
-# Sequence Matrix Plot
-#
-p_rnn   = net_r.forward(tovar(test)).cpu().data.numpy()
-p_qrnn  = net_q.forward(tovar(test)).cpu().data.numpy()
-out_rnn, inp_rnn    = getPlotArray(p_rnn, test)
-out_qrnn, inp_qrnn  = getPlotArray(p_qrnn, test)
-p_rnn[p_rnn>0.5]=1
-p_rnn[p_rnn<0.5]=0
-acc_r = np.sum(p_rnn == test) / test.size
-p_qrnn[p_rnn>0.5]=1
-p_qrnn[p_rnn<0.5]=0
-acc_q = np.sum(p_qrnn == test) / test.size
-print("Final Results -------------------")
-print("Acc for RNN : "+str(acc_r))
-print("Acc for QRNN : "+str(acc_q))
-
-f, axarr = plt.subplots(2,2, sharex=True)
-plt.rcParams['image.cmap'] = 'Blues'
-axarr[0,1].matshow(inp_qrnn)
-axarr[0,1].axes.get_xaxis().set_ticks([])
-axarr[0,1].axes.get_yaxis().set_ticks([])
-axarr[1,1].matshow(out_qrnn)
-axarr[1,1].axes.get_xaxis().set_ticks([])
-axarr[1,1].axes.get_yaxis().set_ticks([])
-im  = axarr[0,0].matshow(inp_rnn)
-axarr[0,0].axes.get_xaxis().set_ticks([])
-axarr[0,0].axes.get_yaxis().set_ticks([])
-axarr[1,0].matshow(out_rnn)
-axarr[1,0].axes.get_xaxis().set_ticks([])
-axarr[1,0].axes.get_yaxis().set_ticks([])
-axarr[0,0].set_title('RNN')
-axarr[0,1].set_title('QRNN')
-i=0
-for ax in axarr.flat:
-    if i==0:
-        ax.set(ylabel='Inputs')
-    elif i==2:
-        ax.set(ylabel='Outputs')
-    i+=1
-
-plt.rcParams['text.latex.preamble']=[r"\usepackage{lmodern}"]
-params = {'text.usetex' : True,
-          'font.size' : 11,
-          'font.family' : 'lmodern',
-          'text.latex.unicode': True,
-          }
-cbar_ax = f.add_axes([1.05, 0.15, 0.05, 0.7])
-plt.colorbar(im, cax=cbar_ax)
-plt.rcParams.update(params)
-plt.subplots_adjust(left=0, bottom=0, right=1, top=1, wspace=0.1, hspace=-0.25)
-plt.savefig("copy_res_test.pdf", dpi=1500, bbox_inches='tight')
+np.savetxt("RES/memory_task_acc_q_"+str(BLANK_SIZE)+".txt", accs_q)
+np.savetxt("RES/memory_task_acc_r_"+str(BLANK_SIZE)+".txt", accs_r)
+np.savetxt("RES/memory_task_loss_q_"+str(BLANK_SIZE)+".txt", losses_q)
+np.savetxt("RES/memory_task_loss_r_"+str(BLANK_SIZE)+".txt", losses_r)
 
 print("Done ! That's All Folks ;) !")
-#plt.show()
